@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+PyPDF2
+python-dotenv
+openai
+google-generativeai
+pinecone-client
