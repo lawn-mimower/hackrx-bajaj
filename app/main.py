@@ -17,7 +17,7 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
 # --- Request Model ---
 class QARequest(BaseModel):
-    pdf_url: str
+    documents: str
     questions: List[str]
 
 # --- Response Model ---
@@ -52,7 +52,7 @@ async def run_hackrx(payload: QARequest, authorization: str = Header(None)):
         expanded_questions = await expand_questions(payload.questions)
 
         # Step 2: Get matched pages + local file path from PDF utility
-        matched_pages, local_pdf_path = await download_pdf_and_match_pages(payload.pdf_url, expanded_questions)
+        matched_pages, local_pdf_path = await download_pdf_and_match_pages(payload.documents, expanded_questions)
 
         # Step 3: Pass data to embedder for embedding and storage (no return expected)
         await final_embeddings(local_pdf_path, matched_pages)
