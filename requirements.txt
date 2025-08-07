@@ -3,6 +3,15 @@ uvicorn
 requests
 PyPDF2
 python-dotenv
-openai
 google-generativeai
-pinecone-client
+pinecone
+python-dotenv
+sentence-transformers
+transformers
+torch
+pdf2image
+PyMuPDF
+opencv-python-headless
+reportlab
+numpy
+scikit-learn
