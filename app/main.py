@@ -1,28 +1,68 @@
-from fastapi import FastAPI, Request, Header, HTTPException
-from app.models import HackRequest, HackResponse
-from app.pdf_utils import process_pdf
-from app.embedding_utils import embed_and_store
-from app.retrieval_utils import answer_questions
+from fastapi import FastAPI, HTTPException, Header
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import List
 import os
-from dotenv import load_dotenv  # <-- Import dotenv
+import asyncio
+import google.generativeai as genai
+from app.pdf_utils import download_pdf_and_match_pages
+from app.embedder import process_and_embed_pdf
+from app.retrieval import retrieval_answer
 
-load_dotenv()  # <-- Load variables from .env
-
+# --- Initialize FastAPI ---
 app = FastAPI()
 
-@app.post("/hackrx/run", response_model=HackResponse)
-async def run_hackrx(payload: HackRequest, authorization: str = Header(None)):
-    if authorization != f"Bearer {os.getenv('BEARER_TOKEN')}":
+# --- Configure Gemini ---
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+
+# --- Request Model ---
+class QARequest(BaseModel):
+    pdf_url: str
+    questions: List[str]
+
+# --- Response Model ---
+class QAResponse(BaseModel):
+    success: bool
+    answers: List[str]
+    processing_info: str = "Completed"
+
+# --- Expand Questions with Gemini ---
+async def expand_questions(questions: List[str], model_name: str = "models/gemini-2.0-flash") -> List[str]:
+    model = genai.GenerativeModel(model_name)
+
+    async def expand(q):
+        prompt = f"just generate 5 keywords that bring out the crux of the question. highlight the nouns in the question {q}"
+        response = await model.generate_content_async(prompt)
+        llm_response = response.text.strip()
+        return f"{q} {llm_response}"
+
+    expanded = await asyncio.gather(*(expand(q) for q in questions))
+    return expanded
+
+# --- Main Endpoint ---
+@app.post("/hackrx/run", response_model=QAResponse)
+async def run_hackrx(payload: QARequest, authorization: str = Header(None)):
+    # --- Validate Bearer Token ---
+    expected_token = os.environ.get("BEARER_TOKEN")
+    if not expected_token or authorization != f"Bearer {expected_token}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        texts = process_pdf(payload.documents)
-        embed_and_store(texts)
-        answers = answer_questions(payload.questions)
-        return {
-            "success": True,
-            "processing_info": "Answers generated successfully",
-            "answers": answers
-        }
+        # Step 1: Expand questions
+        expanded_questions = await expand_questions(payload.questions)
+
+        # Step 2: Get matched pages + local file path from PDF utility
+        matched_pages, local_pdf_path = await download_pdf_and_match_pages(payload.pdf_url, expanded_questions)
+
+        # Step 3: Pass data to embedder for embedding and storage (no return expected)
+        await final_embeddings(local_pdf_path, matched_pages)
+
+        # Step 4: Generate answers from retrieval module
+        answers = await retrieval_answer(expanded_questions)
+
+        return QAResponse(
+            answers=answers
+        )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
